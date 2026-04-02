@@ -1,3 +1,18 @@
+/**
+ * Architecture (React popup UI):
+ * - What this file does:
+ *   Renders the extension "popup" UI shown when the user clicks the extension icon.
+ * - Main flow:
+ *   1) On mount, reads `chrome.storage.local` for:
+ *      - `isActive`
+ *      - dictionary loading status (`dictionaryLoaded`, counts, progress)
+ *   2) Subscribes to `chrome.storage.onChanged` to update the UI live.
+ *   3) On toggle click, updates `isActive` in storage (and updates local state).
+ *
+ * Beginner mental model:
+ * - This file = "UI + storage wiring" for the popup screen only.
+ */
+
 import { useEffect, useState } from 'react';
 
 function App() {

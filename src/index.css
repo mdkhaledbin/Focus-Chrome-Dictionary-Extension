@@ -1,2 +1,14 @@
+/**
+ * Architecture (Tailwind entry CSS):
+ * - What this file does:
+ *   Pulls in Tailwind's generated styles.
+ * - Used by:
+ *   `main.tsx` (the React popup UI).
+ *
+ * Note:
+ * The content script uses a Shadow DOM and injects its own `<style>` block,
+ * so Tailwind here is for the popup UI, not the content popup.
+ */
+
 @import "tailwindcss";
 

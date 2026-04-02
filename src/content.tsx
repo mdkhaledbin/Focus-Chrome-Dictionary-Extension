@@ -1,39 +1,29 @@
-interface Definition {
-  word: string;
-  phonetic?: string;
-  meanings: {
-    partOfSpeech: string;
-    definitions: {
-      definition: string;
-      example?: string;
-    }[];
-  }[];
-}
+/**
+ * Architecture (content script):
+ * - What this file does:
+ *   Injects a Shadow DOM UI (lookup button + popup) into the current webpage and
+ *   controls when it opens/closes.
+ * - Main flow:
+ *   1) `bootstrapFocusContentScript()` runs once per page and creates:
+ *      - a Shadow DOM host (`focus-extension-root`)
+ *      - an injected `<style>` block (the popup look/animations)
+ *      - the floating lookup button + popup container
+ *   2) Mouse selection tracking:
+ *      - on `mouseup`, it reads `window.getSelection()` and positions the button
+ *   3) User lookup:
+ *      - on button click, it sends the selected text to the background script
+ *   4) Rendering:
+ *      - uses `createRenderer()` to render loading/no-result/definitions into `popup`
+ *
+ * Beginner mental model:
+ * - This file = "UI controller" (events + positioning).
+ * - `src/content/renderer.ts` = "how the popup HTML gets built".
+ * - `src/content/lookup.ts` = "how we ask background to fetch definitions".
+ */
 
-type LookupSource = "indexeddb" | "api";
-
-type ApiDefinition = {
-  definition?: string;
-  example?: string;
-};
-
-type ApiMeaning = {
-  partOfSpeech?: string;
-  definitions?: ApiDefinition[];
-};
-
-type ApiEntry = {
-  word?: string;
-  phonetic?: string;
-  meanings?: ApiMeaning[];
-};
-
-type LookupResponse = {
-  success: boolean;
-  source?: LookupSource;
-  data?: Definition[] | ApiEntry[] | null;
-  error?: string;
-};
+import type { Definition, LookupSource } from "./content/types";
+import { createRenderer } from "./content/renderer";
+import { lookupWordViaBackground } from "./content/lookup";
 
 (function bootstrapFocusContentScript() {
   if (document.getElementById("focus-extension-root")) {
@@ -603,41 +593,13 @@ type LookupResponse = {
     );
   };
 
-  const renderShell = (word: string, body: string, source?: LookupSource) => {
-    popup.innerHTML = `
-      <div class="popup-panel">
-        <div class="popup-scroll">
-          <div class="popup-shell">
-            <div class="popup-header">
-              <div class="title-wrap">
-                <h2 class="popup-title"></h2>
-                <span class="source-badge hidden"></span>
-              </div>
-              <button class="close-btn" type="button" aria-label="Close popup">×</button>
-            </div>
-            ${body}
-          </div>
-        </div>
-      </div>
-    `;
-
-    const title = popup.querySelector(".popup-title") as HTMLElement;
-    title.textContent = word;
-
-    const badge = popup.querySelector(".source-badge") as HTMLElement;
-    badge.className = "source-badge hidden";
-    if (source) {
-      badge.textContent = source === "indexeddb" ? "IndexedDB" : "API";
-      badge.classList.remove("hidden");
-      badge.classList.add(`source-badge--${source}`);
-    }
-
-    const closeBtn = popup.querySelector(".close-btn") as HTMLButtonElement;
-    closeBtn.addEventListener("click", () => {
-      closeAll();
-      window.getSelection()?.removeAllRanges();
-    });
-  };
+  // Renderer handles popup HTML + "Dictionary/Wikipedia" interactions.
+  // We keep popup positioning/animation in this file to avoid changing behavior.
+  const renderer = createRenderer({
+    popup,
+    onClose: closeAll,
+    openSource,
+  });
 
   const setPopupOrigin = () => {
     const popupWidth = 340;
@@ -709,166 +671,11 @@ type LookupResponse = {
   };
 
   const renderLoading = (word: string) => {
-    renderShell(word, `<div class="loading">Looking up meaning...</div>`);
+    renderer.renderLoading(word);
   };
 
   const renderNoResult = (word: string) => {
-    renderShell(
-      word,
-      `<div class="empty">No definition found for this text.</div>`,
-    );
-  };
-
-  const escapeHtml = (text: string) =>
-    text.replace(/[&<>"']/g, (char) => {
-      switch (char) {
-        case "&":
-          return "&amp;";
-        case "<":
-          return "&lt;";
-        case ">":
-          return "&gt;";
-        case '"':
-          return "&quot;";
-        case "'":
-          return "&#39;";
-        default:
-          return char;
-      }
-    });
-
-  const normalizeIndexedText = (text: string) =>
-    text
-      .replace(/\s+/g, " ")
-      .replace(/\s+([,;:.!?])/g, "$1")
-      .replace(/\s*—\s*/g, " — ")
-      .replace(/\s*--\s*/g, " — ")
-      .trim();
-
-  const splitIndexedPoints = (text: string) => {
-    const matches = [...text.matchAll(/(?:^|\s)(\d+)\.\s*/g)];
-
-    if (matches.length === 0) {
-      return [
-        { number: null as string | null, text: normalizeIndexedText(text) },
-      ];
-    }
-
-    return matches
-      .map((match, index) => {
-        const start = (match.index ?? 0) + match[0].length;
-        const end = matches[index + 1]?.index ?? text.length;
-        return {
-          number: match[1],
-          text: normalizeIndexedText(text.slice(start, end)),
-        };
-      })
-      .filter((point) => point.text.length > 0);
-  };
-
-  const splitIndexedClauses = (text: string) =>
-    normalizeIndexedText(text)
-      .split(/\s*;\s*--\s*|\s+--\s+|;\s+/)
-      .map((item) => normalizeIndexedText(item))
-      .filter(Boolean);
-
-  const extractIndexedSubpoints = (text: string) => {
-    const matches = [...text.matchAll(/\(([a-z])\)\s*/gi)];
-
-    if (!matches.length) {
-      return null;
-    }
-
-    const intro = normalizeIndexedText(
-      text.slice(0, matches[0].index ?? 0).replace(/[:;,-]+$/, ""),
-    );
-
-    const items = matches
-      .map((match, index) => {
-        const start = (match.index ?? 0) + match[0].length;
-        const end = matches[index + 1]?.index ?? text.length;
-        return {
-          label: match[1],
-          text: normalizeIndexedText(
-            text.slice(start, end).replace(/^[;:,-\s]+/, ""),
-          ),
-        };
-      })
-      .filter((item) => item.text.length > 0);
-
-    return { intro, items };
-  };
-
-  const formatIndexedClause = (text: string) => {
-    const cleaned = normalizeIndexedText(text);
-    const subpoints = extractIndexedSubpoints(cleaned);
-
-    if (subpoints) {
-      return {
-        html: `
-          ${subpoints.intro ? `<div class="indexed-meta">${escapeHtml(subpoints.intro)}</div>` : ""}
-          <ul class="indexed-subpoints">
-            ${subpoints.items
-              .map(
-                (item) => `
-                  <li>
-                    <span class="indexed-label">${escapeHtml(item.label)}</span>
-                    <span class="indexed-divider">—</span>
-                    <span>${escapeHtml(item.text)}</span>
-                  </li>
-                `,
-              )
-              .join("")}
-          </ul>
-        `,
-      };
-    }
-
-    const labelMatch = cleaned.match(/^(.{1,40}?),\s*(.+)$/);
-    if (labelMatch && /^[A-Z]/.test(labelMatch[1])) {
-      return {
-        html: `
-          <div>
-            <span class="indexed-label">${escapeHtml(labelMatch[1])}</span>
-            <span class="indexed-divider">—</span>
-            <span>${escapeHtml(labelMatch[2])}</span>
-          </div>
-        `,
-      };
-    }
-
-    return { html: `<div>${escapeHtml(cleaned)}</div>` };
-  };
-
-  const renderIndexedDbMeaning = (text: string) => {
-    const points = splitIndexedPoints(text);
-
-    return `
-      <div class="indexed-block">
-        ${points
-          .map((point) => {
-            const clauses = splitIndexedClauses(point.text);
-            const lead = clauses.shift() ?? point.text;
-
-            const clauseHtml = clauses
-              .map((clause) => {
-                const formatted = formatIndexedClause(clause);
-                return `<li>${formatted.html}</li>`;
-              })
-              .join("");
-
-            return `
-              <div class="indexed-point">
-                <div class="indexed-content">
-                  <div class="indexed-lead">${escapeHtml(lead)}</div>
-                  ${clauseHtml ? `<ul class="indexed-clauses">${clauseHtml}</ul>` : ""}
-                </div>
-              </div>
-            `;
-          })
-          .join("")}
-      </div>
-    `;
+    renderer.renderNoResult(word);
   };
 
   const renderDefinition = (
@@ -876,70 +683,8 @@ type LookupResponse = {
     data: Definition[],
     source?: LookupSource,
   ) => {
-    const isIndexedDb = source === "indexeddb";
-
-    const parts = data
-      .map((entry, entryIndex) => {
-        const meaningBlocks = entry.meanings
-          .map((meaning) => {
-            const defs = isIndexedDb
-              ? renderIndexedDbMeaning(meaning.definitions[0]?.definition ?? "")
-              : meaning.definitions
-                  .slice(0, 3)
-                  .map((def) => {
-                    const example = def.example
-                      ? `<div class="definition-note">${escapeHtml(def.example)}</div>`
-                      : "";
-                    return `<li><div class="definition-text">${escapeHtml(def.definition)}${example}</div></li>`;
-                  })
-                  .join("");
-
-            return `
-              <div class="definition-group">
-                <div class="section-header"><span>${meaning.partOfSpeech}</span></div>
-                ${isIndexedDb ? defs : `<ol class="definition-list">${defs}</ol>`}
-              </div>
-            `;
-          })
-          .join("");
-
-        return `
-          <div class="entry">
-            ${entry.phonetic ? `<div class="phonetic">${entry.phonetic}</div>` : ""}
-            ${meaningBlocks}
-            ${entryIndex < data.length - 1 ? "<hr />" : ""}
-          </div>
-        `;
-      })
-      .join("");
-
-    renderShell(
-      word,
-      `
-        ${parts}
-        <div class="popup-footer">
-          <button class="source-btn" type="button" data-source="dictionary">Dictionary</button>
-          <button class="source-btn" type="button" data-source="wikipedia">Wikipedia</button>
-        </div>
-      `,
-      source,
-    );
-
-    popup.querySelectorAll("[data-source]").forEach((el) => {
-      const btn = el as HTMLButtonElement;
-      btn.addEventListener("click", () => {
-        const source = btn.dataset.source;
-        if (source === "dictionary") {
-          openSource("https://www.dictionary.com/browse/", word);
-        }
-        if (source === "wikipedia") {
-          openSource(
-            "https://en.wikipedia.org/wiki/Special:Search?search=",
-            word,
-          );
-        }
-      });
-    });
+    // Delegate to the renderer module so the main content script stays readable.
+    renderer.renderDefinition(word, data, source);
   };
 
   const lookupWord = async (word: string) => {
@@ -948,27 +693,14 @@ type LookupResponse = {
     openPopupAnimated();
 
     try {
-      const response = await new Promise<LookupResponse>((resolve) => {
-        chrome.runtime.sendMessage({ action: "LOOKUP_WORD", word }, (res) => {
-          if (chrome.runtime.lastError) {
-            resolve({
-              success: false,
-              error: chrome.runtime.lastError.message,
-            });
-            return;
-          }
-          resolve(res);
-        });
-      });
-
-      const source = response?.source;
+      const response = await lookupWordViaBackground(word);
 
       if (
         response?.success &&
         Array.isArray(response.data) &&
         response.data.length > 0
       ) {
-        renderDefinition(word, response.data as Definition[], source);
+        renderDefinition(word, response.data as Definition[], response.source);
       } else {
         renderNoResult(word);
       }

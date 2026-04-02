@@ -41,6 +41,9 @@ lerna-debug.log*
 .DS_Store
 Thumbs.db
 
+# Unused content-script modules (kept for reference, not active)
+src/content-unused/
+
 # Misc
 *.suo
 *.ntvs*

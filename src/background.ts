@@ -1,40 +1,37 @@
+/**
+ * Architecture (background script):
+ * - What this file does:
+ *   1) On install/start, loads `dictionary_compact.json` into IndexedDB (first run).
+ *   2) Handles lookup requests from `content.tsx` via `chrome.runtime.onMessage`.
+ *   3) Uses an in-memory LRU cache for fast repeated lookups.
+ *   4) Falls back to the Free Dictionary API if a word isn't in IndexedDB.
+ *
+ * Message contract (from content script):
+ * - `LOOKUP_WORD` -> returns `{ success, source, data }`
+ *
+ * Beginner mental model:
+ * - This file = "dictionary engine" (storage + caching + fetch fallback).
+ */
+
 // background.ts — Focus Extension
 // Loads dictionary_compact.json into IndexedDB on first install,
 // uses in-memory cache for fast lookups, falls back to Free Dictionary API.
+
+import type {
+  ApiEntry,
+  CachedDefinition,
+  Definition,
+  LookupRequest,
+  LookupResult,
+  LookupSource,
+  MessageResponse,
+} from "./content/types";
 
 const DB_NAME = "FocusDictDB";
 const DB_VERSION = 1;
 const STORE_NAME = "words";
 const CACHE_MAX_SIZE = 500;
 const API_CACHE_PREFIX = "__API_CACHE__";
-
-type LookupSource = "indexeddb" | "api";
-
-type ApiDefinition = {
-  definition?: string;
-  example?: string;
-};
-
-type ApiMeaning = {
-  partOfSpeech?: string;
-  definitions?: ApiDefinition[];
-};
-
-type ApiEntry = {
-  word?: string;
-  phonetic?: string;
-  meanings?: ApiMeaning[];
-};
-
-type CachedDefinition = {
-  payload: string;
-  source: LookupSource;
-};
-
-type LookupResult = {
-  source: LookupSource;
-  data: ReturnType<typeof formatLocalDefinition> | ApiEntry[];
-} | null;
 
 // In-memory LRU cache for recently looked-up words
 const memoryCache = new Map<string, CachedDefinition>();
@@ -183,7 +180,7 @@ function encodeApiCachePayload(data: ApiEntry[]): string {
 
 function decodeCachedPayload(payload: string): {
   source: LookupSource;
-  data: ReturnType<typeof formatLocalDefinition> | ApiEntry[];
+  data: Definition[] | ApiEntry[];
 } {
   if (payload.startsWith(API_CACHE_PREFIX)) {
     try {
@@ -199,7 +196,7 @@ function decodeCachedPayload(payload: string): {
 
   return {
     source: "indexeddb",
-    data: formatLocalDefinition("", payload),
+    data: formatLocalDefinition("", payload) as Definition[],
   };
 }
 
@@ -328,20 +325,6 @@ chrome.runtime.onStartup?.addListener(async () => {
     await loadDictionary();
   }
 });
-
-type LookupRequest = {
-  action: string;
-  word?: string;
-};
-
-type LookupResponse = {
-  success: boolean;
-  source?: LookupSource;
-  data?: ReturnType<typeof formatLocalDefinition> | ApiEntry[] | null;
-  error?: string;
-};
-
-type MessageResponse = LookupResponse | Record<string, unknown>;
 
 chrome.runtime.onMessage.addListener(
   (
