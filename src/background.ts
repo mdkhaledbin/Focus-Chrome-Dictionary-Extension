@@ -2,13 +2,42 @@
 // Loads dictionary_compact.json into IndexedDB on first install,
 // uses in-memory cache for fast lookups, falls back to Free Dictionary API.
 
-const DB_NAME = 'FocusDictDB';
+const DB_NAME = "FocusDictDB";
 const DB_VERSION = 1;
-const STORE_NAME = 'words';
+const STORE_NAME = "words";
 const CACHE_MAX_SIZE = 500;
+const API_CACHE_PREFIX = "__API_CACHE__";
+
+type LookupSource = "indexeddb" | "api";
+
+type ApiDefinition = {
+  definition?: string;
+  example?: string;
+};
+
+type ApiMeaning = {
+  partOfSpeech?: string;
+  definitions?: ApiDefinition[];
+};
+
+type ApiEntry = {
+  word?: string;
+  phonetic?: string;
+  meanings?: ApiMeaning[];
+};
+
+type CachedDefinition = {
+  payload: string;
+  source: LookupSource;
+};
+
+type LookupResult = {
+  source: LookupSource;
+  data: ReturnType<typeof formatLocalDefinition> | ApiEntry[];
+} | null;
 
 // In-memory LRU cache for recently looked-up words
-const memoryCache = new Map<string, string>();
+const memoryCache = new Map<string, CachedDefinition>();
 
 // ─── IndexedDB Helpers ───────────────────────────────────────────────
 
@@ -30,7 +59,7 @@ function openDB(): Promise<IDBDatabase> {
 
 function getFromDB(db: IDBDatabase, word: string): Promise<string | undefined> {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
+    const tx = db.transaction(STORE_NAME, "readonly");
     const store = tx.objectStore(STORE_NAME);
     const req = store.get(word);
     req.onsuccess = () => resolve(req.result as string | undefined);
@@ -38,9 +67,13 @@ function getFromDB(db: IDBDatabase, word: string): Promise<string | undefined> {
   });
 }
 
-function putInDB(db: IDBDatabase, word: string, definition: string): Promise<void> {
+function putInDB(
+  db: IDBDatabase,
+  word: string,
+  definition: string,
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
     store.put(definition, word);
     tx.oncomplete = () => resolve();
@@ -52,7 +85,10 @@ function putInDB(db: IDBDatabase, word: string, definition: string): Promise<voi
  * Batch-insert dictionary entries into IndexedDB.
  * We chunk the entries to avoid overwhelming a single transaction.
  */
-async function batchInsert(db: IDBDatabase, entries: [string, string][]): Promise<void> {
+async function batchInsert(
+  db: IDBDatabase,
+  entries: [string, string][],
+): Promise<void> {
   const CHUNK_SIZE = 5000;
   const totalChunks = Math.ceil(entries.length / CHUNK_SIZE);
 
@@ -60,7 +96,7 @@ async function batchInsert(db: IDBDatabase, entries: [string, string][]): Promis
     const chunk = entries.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
 
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const tx = db.transaction(STORE_NAME, "readwrite");
       const store = tx.objectStore(STORE_NAME);
 
       for (const [word, definition] of chunk) {
@@ -68,10 +104,11 @@ async function batchInsert(db: IDBDatabase, entries: [string, string][]): Promis
       }
 
       tx.oncomplete = () => {
-        // Report progress
         const progress = Math.round(((i + 1) / totalChunks) * 100);
         chrome.storage.local.set({ dictionaryLoadProgress: progress });
-        console.log(`[Focus] Import progress: ${progress}% (chunk ${i + 1}/${totalChunks})`);
+        console.log(
+          `[Focus] Import progress: ${progress}% (chunk ${i + 1}/${totalChunks})`,
+        );
         resolve();
       };
       tx.onerror = () => reject(tx.error);
@@ -82,22 +119,25 @@ async function batchInsert(db: IDBDatabase, entries: [string, string][]): Promis
 // ─── Dictionary Loading ──────────────────────────────────────────────
 
 async function loadDictionary(): Promise<void> {
-  const { dictionaryLoaded } = await chrome.storage.local.get('dictionaryLoaded');
+  const { dictionaryLoaded } =
+    await chrome.storage.local.get("dictionaryLoaded");
 
   if (dictionaryLoaded) {
-    console.log('[Focus] Dictionary already loaded in IndexedDB.');
+    console.log("[Focus] Dictionary already loaded in IndexedDB.");
     return;
   }
 
-  console.log('[Focus] Loading dictionary_compact.json into IndexedDB...');
+  console.log("[Focus] Loading dictionary_compact.json into IndexedDB...");
   chrome.storage.local.set({ dictionaryLoadProgress: 0 });
 
   try {
-    const url = chrome.runtime.getURL('dictionary_compact.json');
+    const url = chrome.runtime.getURL("dictionary_compact.json");
     const response = await fetch(url);
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch dictionary: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `Failed to fetch dictionary: ${response.status} ${response.statusText}`,
+      );
     }
 
     const dictData: Record<string, string> = await response.json();
@@ -110,66 +150,110 @@ async function loadDictionary(): Promise<void> {
     await batchInsert(db, entries);
     db.close();
 
-    // Mark as loaded and store word count
     await chrome.storage.local.set({
       dictionaryLoaded: true,
       dictionaryWordCount: wordCount,
       dictionaryLoadProgress: 100,
     });
 
-    console.log(`[Focus] Successfully loaded ${wordCount} words into IndexedDB.`);
+    console.log(
+      `[Focus] Successfully loaded ${wordCount} words into IndexedDB.`,
+    );
   } catch (error) {
-    console.error('[Focus] Error loading dictionary:', error);
+    console.error("[Focus] Error loading dictionary:", error);
     chrome.storage.local.set({ dictionaryLoadProgress: -1 }); // -1 = error
   }
 }
 
 // ─── Cache Helper ────────────────────────────────────────────────────
 
-function addToCache(word: string, definition: string): void {
-  // Simple LRU: if cache is full, delete the oldest entry
+function addToCache(word: string, payload: string, source: LookupSource): void {
   if (memoryCache.size >= CACHE_MAX_SIZE) {
     const oldestKey = memoryCache.keys().next().value;
     if (oldestKey !== undefined) {
       memoryCache.delete(oldestKey);
     }
   }
-  memoryCache.set(word, definition);
+  memoryCache.set(word, { payload, source });
+}
+
+function encodeApiCachePayload(data: ApiEntry[]): string {
+  return `${API_CACHE_PREFIX}${JSON.stringify(data)}`;
+}
+
+function decodeCachedPayload(payload: string): {
+  source: LookupSource;
+  data: ReturnType<typeof formatLocalDefinition> | ApiEntry[];
+} {
+  if (payload.startsWith(API_CACHE_PREFIX)) {
+    try {
+      const raw = payload.slice(API_CACHE_PREFIX.length);
+      return {
+        source: "api",
+        data: JSON.parse(raw) as ApiEntry[],
+      };
+    } catch (error) {
+      console.error("[Focus] Failed to decode API cache payload:", error);
+    }
+  }
+
+  return {
+    source: "indexeddb",
+    data: formatLocalDefinition("", payload),
+  };
 }
 
 // ─── Word Lookup ─────────────────────────────────────────────────────
 
-async function handleWordLookup(word: string) {
+async function handleWordLookup(word: string): Promise<LookupResult> {
   const normalizedWord = word.trim().toLowerCase();
 
   // 1. Check in-memory cache
   if (memoryCache.has(normalizedWord)) {
     console.log(`[Focus] Cache hit for "${normalizedWord}"`);
-    const def = memoryCache.get(normalizedWord)!;
-    return formatLocalDefinition(word, def);
+    const cached = memoryCache.get(normalizedWord)!;
+    const decoded = decodeCachedPayload(cached.payload);
+
+    return {
+      source: decoded.source,
+      data:
+        decoded.source === "api"
+          ? (decoded.data as ApiEntry[])
+          : formatLocalDefinition(word, cached.payload),
+    };
   }
 
   // 2. Check IndexedDB
   try {
     const db = await openDB();
-    const definition = await getFromDB(db, normalizedWord);
+    const storedValue = await getFromDB(db, normalizedWord);
     db.close();
 
-    if (definition) {
+    if (storedValue) {
+      const decoded = decodeCachedPayload(storedValue);
       console.log(`[Focus] IndexedDB hit for "${normalizedWord}"`);
-      addToCache(normalizedWord, definition);
-      return formatLocalDefinition(word, definition);
+      addToCache(normalizedWord, storedValue, decoded.source);
+
+      return {
+        source: decoded.source,
+        data:
+          decoded.source === "api"
+            ? (decoded.data as ApiEntry[])
+            : formatLocalDefinition(word, storedValue),
+      };
     }
   } catch (dbError) {
-    console.error('[Focus] IndexedDB lookup error:', dbError);
+    console.error("[Focus] IndexedDB lookup error:", dbError);
   }
 
   // 3. Fallback to Free Dictionary API
-  console.log(`[Focus] "${normalizedWord}" not in local DB. Falling back to API...`);
+  console.log(
+    `[Focus] "${normalizedWord}" not in local DB. Falling back to API...`,
+  );
 
   try {
     const response = await fetch(
-      `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(normalizedWord)}`
+      `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(normalizedWord)}`,
     );
 
     if (!response.ok) {
@@ -179,27 +263,29 @@ async function handleWordLookup(word: string) {
       throw new Error(`API returned ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as ApiEntry[];
 
-    // Store the first definition in IndexedDB for future offline use
     try {
       if (data && data.length > 0) {
-        const firstDef = extractFirstDefinition(data);
-        if (firstDef) {
-          const db = await openDB();
-          await putInDB(db, normalizedWord, firstDef);
-          db.close();
-          addToCache(normalizedWord, firstDef);
-          console.log(`[Focus] Cached API result for "${normalizedWord}" in IndexedDB.`);
-        }
+        const apiCachePayload = encodeApiCachePayload(data);
+        const db = await openDB();
+        await putInDB(db, normalizedWord, apiCachePayload);
+        db.close();
+        addToCache(normalizedWord, apiCachePayload, "api");
+        console.log(
+          `[Focus] Cached full API result for "${normalizedWord}" in IndexedDB.`,
+        );
       }
     } catch (cacheError) {
-      console.error('[Focus] Error caching API result:', cacheError);
+      console.error("[Focus] Error caching API result:", cacheError);
     }
 
-    return data;
+    return {
+      source: "api",
+      data,
+    };
   } catch (apiError) {
-    console.error('[Focus] API fetch error:', apiError);
+    console.error("[Focus] API fetch error:", apiError);
     throw apiError;
   }
 }
@@ -214,7 +300,7 @@ function formatLocalDefinition(word: string, definition: string) {
       word,
       meanings: [
         {
-          partOfSpeech: 'definition',
+          partOfSpeech: "definition",
           definitions: [
             {
               definition,
@@ -226,59 +312,75 @@ function formatLocalDefinition(word: string, definition: string) {
   ];
 }
 
-/**
- * Extract a simple string definition from the API response for caching.
- */
-function extractFirstDefinition(apiData: any[]): string | null {
-  try {
-    for (const entry of apiData) {
-      for (const meaning of entry.meanings || []) {
-        for (const def of meaning.definitions || []) {
-          if (def.definition) {
-            return def.definition;
-          }
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return null;
-}
-
 // ─── Event Listeners ─────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(async () => {
-  console.log('[Focus] Extension installed.');
+  console.log("[Focus] Extension installed.");
   await loadDictionary();
 });
 
 // Also try loading on startup in case install didn't complete
 chrome.runtime.onStartup?.addListener(async () => {
-  console.log('[Focus] Extension started.');
-  const { dictionaryLoaded } = await chrome.storage.local.get('dictionaryLoaded');
+  console.log("[Focus] Extension started.");
+  const { dictionaryLoaded } =
+    await chrome.storage.local.get("dictionaryLoaded");
   if (!dictionaryLoaded) {
     await loadDictionary();
   }
 });
 
+type LookupRequest = {
+  action: string;
+  word?: string;
+};
+
+type LookupResponse = {
+  success: boolean;
+  source?: LookupSource;
+  data?: ReturnType<typeof formatLocalDefinition> | ApiEntry[] | null;
+  error?: string;
+};
+
+type MessageResponse = LookupResponse | Record<string, unknown>;
+
 chrome.runtime.onMessage.addListener(
-  (request: any, _sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void) => {
-    if (request.action === 'LOOKUP_WORD') {
-      handleWordLookup(request.word)
-        .then((result) => sendResponse({ success: true, data: result }))
-        .catch((error) => sendResponse({ success: false, error: error.message }));
+  (
+    request: LookupRequest,
+    _sender: chrome.runtime.MessageSender,
+    sendResponse: (response?: MessageResponse) => void,
+  ) => {
+    if (request.action === "LOOKUP_WORD") {
+      handleWordLookup(request.word ?? "")
+        .then((result) => {
+          if (!result) {
+            sendResponse({ success: false, data: null });
+            return;
+          }
+
+          sendResponse({
+            success: true,
+            source: result.source,
+            data: result.data,
+          });
+        })
+        .catch((error) =>
+          sendResponse({ success: false, error: error.message }),
+        );
 
       return true; // Keep the message channel open for async response
     }
 
-    if (request.action === 'GET_DICT_STATUS') {
+    if (request.action === "GET_DICT_STATUS") {
       chrome.storage.local
-        .get(['dictionaryLoaded', 'dictionaryWordCount', 'dictionaryLoadProgress'])
+        .get([
+          "dictionaryLoaded",
+          "dictionaryWordCount",
+          "dictionaryLoadProgress",
+        ])
         .then((result) => sendResponse(result))
         .catch(() => sendResponse({}));
 
       return true;
     }
-  }
+  },
 );

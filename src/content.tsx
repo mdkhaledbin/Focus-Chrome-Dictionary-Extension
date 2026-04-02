@@ -10,6 +10,31 @@ interface Definition {
   }[];
 }
 
+type LookupSource = "indexeddb" | "api";
+
+type ApiDefinition = {
+  definition?: string;
+  example?: string;
+};
+
+type ApiMeaning = {
+  partOfSpeech?: string;
+  definitions?: ApiDefinition[];
+};
+
+type ApiEntry = {
+  word?: string;
+  phonetic?: string;
+  meanings?: ApiMeaning[];
+};
+
+type LookupResponse = {
+  success: boolean;
+  source?: LookupSource;
+  data?: Definition[] | ApiEntry[] | null;
+  error?: string;
+};
+
 (function bootstrapFocusContentScript() {
   if (document.getElementById("focus-extension-root")) {
     return;
@@ -152,6 +177,14 @@ interface Definition {
       align-items: center;
       justify-content: space-between;
       margin-bottom: 4px;
+      gap: 10px;
+    }
+
+    .title-wrap {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
     }
 
     .popup-title {
@@ -163,6 +196,30 @@ interface Definition {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .source-badge {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      background: rgba(0, 0, 0, 0.06);
+      color: #555;
+    }
+
+    .source-badge--indexeddb {
+      background: rgba(59, 130, 246, 0.12);
+      color: #1d4ed8;
+    }
+
+    .source-badge--api {
+      background: rgba(16, 185, 129, 0.12);
+      color: #047857;
     }
 
     .close-btn {
@@ -282,6 +339,143 @@ interface Definition {
       padding-left: 2px;
     }
 
+    .indexed-block {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 2px 0 0;
+    }
+
+    .indexed-point {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 10px 10px 10px 0;
+      border-radius: 10px;
+    }
+
+    .indexed-number {
+      flex: none;
+      min-width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: #1d4ed8;
+      background: rgba(59, 130, 246, 0.12);
+      margin-top: 1px;
+    }
+
+    .indexed-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .indexed-lead {
+      font-size: 13px;
+      line-height: 1.55;
+      font-weight: 600;
+      color: #1f2937;
+      margin-bottom: 8px;
+    }
+
+    .indexed-clauses {
+      margin: 0;
+      padding: 0 0 0 18px;
+      list-style: disc;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .indexed-clauses li {
+      margin: 0;
+      color: #374151;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .indexed-clauses li::marker {
+      color: rgba(29, 78, 216, 0.55);
+    }
+
+    .indexed-label {
+      font-weight: 700;
+      color: #111827;
+    }
+
+    .indexed-divider {
+      color: #6b7280;
+      margin: 0 4px;
+    }
+
+    .indexed-subpoints {
+      margin: 8px 0 0;
+      padding: 0 0 0 18px;
+      list-style: lower-alpha;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .indexed-subpoints li {
+      margin: 0;
+      color: #4b5563;
+      font-size: 12.5px;
+      line-height: 1.45;
+    }
+
+    .indexed-subpoints li::marker {
+      color: rgba(107, 114, 128, 0.9);
+      font-weight: 600;
+    }
+
+    .indexed-meta {
+      margin-top: 6px;
+      color: #6b7280;
+      font-size: 12px;
+      font-style: italic;
+      line-height: 1.45;
+    }
+
+    .definition-list,
+    .indexed-list {
+      margin: 0;
+      padding: 0 0 0 18px;
+      list-style: decimal;
+    }
+
+    .definition-list li,
+    .indexed-list li {
+      margin-bottom: 10px;
+    }
+
+    .definition-text {
+      font-size: 13px;
+      line-height: 1.5;
+      color: inherit;
+    }
+
+    .definition-note {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      margin-top: 4px;
+      padding-left: 8px;
+      color: #6b7280;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .definition-note::before {
+      content: "•";
+      flex: none;
+      color: rgba(0, 0, 0, 0.35);
+    }
+
     hr {
       border: 0;
       height: 0.5px;
@@ -311,10 +505,25 @@ interface Definition {
       .part { color: #c4c4c4; }
       li { color: #e5e7eb; }
       li::marker { color: rgba(255, 255, 255, 0.5); }
-      .example {
-        color: #cbd5e1;
-        border-left-color: rgba(255, 255, 255, 0.18);
+      .indexed-number {
+        background: rgba(96, 165, 250, 0.18);
+        color: #bfdbfe;
       }
+      .indexed-lead { color: #f3f4f6; }
+      .indexed-clauses li { color: #e5e7eb; }
+      .indexed-clauses li::marker { color: rgba(147, 197, 253, 0.6); }
+      .indexed-label { color: #f9fafb; }
+      .indexed-divider { color: #9ca3af; }
+      .indexed-subpoints li { color: #d1d5db; }
+      .indexed-subpoints li::marker { color: rgba(209, 213, 219, 0.8); }
+      .indexed-meta { color: #cbd5e1; }
+      .definition-note {
+        color: #cbd5e1;
+      }
+      .definition-note::before { color: rgba(255, 255, 255, 0.5); }
+      .source-badge { background: rgba(255, 255, 255, 0.08); color: #d1d5db; }
+      .source-badge--indexeddb { background: rgba(59, 130, 246, 0.16); color: #bfdbfe; }
+      .source-badge--api { background: rgba(16, 185, 129, 0.16); color: #a7f3d0; }
       .source-btn {
         background: rgba(255, 255, 255, 0.08);
         color: #e5e7eb;
@@ -394,13 +603,16 @@ interface Definition {
     );
   };
 
-  const renderShell = (word: string, body: string) => {
+  const renderShell = (word: string, body: string, source?: LookupSource) => {
     popup.innerHTML = `
       <div class="popup-panel">
         <div class="popup-scroll">
           <div class="popup-shell">
             <div class="popup-header">
-              <h2 class="popup-title"></h2>
+              <div class="title-wrap">
+                <h2 class="popup-title"></h2>
+                <span class="source-badge hidden"></span>
+              </div>
               <button class="close-btn" type="button" aria-label="Close popup">×</button>
             </div>
             ${body}
@@ -411,6 +623,14 @@ interface Definition {
 
     const title = popup.querySelector(".popup-title") as HTMLElement;
     title.textContent = word;
+
+    const badge = popup.querySelector(".source-badge") as HTMLElement;
+    badge.className = "source-badge hidden";
+    if (source) {
+      badge.textContent = source === "indexeddb" ? "IndexedDB" : "API";
+      badge.classList.remove("hidden");
+      badge.classList.add(`source-badge--${source}`);
+    }
 
     const closeBtn = popup.querySelector(".close-btn") as HTMLButtonElement;
     closeBtn.addEventListener("click", () => {
@@ -485,7 +705,7 @@ interface Definition {
     popupCloseTimer = window.setTimeout(() => {
       popup.removeEventListener("animationend", onEnd as EventListener);
       finishClose();
-    }, 220);
+    }, 450);
   };
 
   const renderLoading = (word: string) => {
@@ -499,25 +719,185 @@ interface Definition {
     );
   };
 
-  const renderDefinition = (word: string, data: Definition[]) => {
-    const parts = data
-      .map((entry, entryIndex) => {
-        const meaningBlocks = entry.meanings
-          .map((meaning) => {
-            const defs = meaning.definitions
-              .slice(0, 3)
-              .map((def) => {
-                const example = def.example
-                  ? `<span class="example">"${def.example}"</span>`
-                  : "";
-                return `<li>${def.definition}${example}</li>`;
+  const escapeHtml = (text: string) =>
+    text.replace(/[&<>"']/g, (char) => {
+      switch (char) {
+        case "&":
+          return "&amp;";
+        case "<":
+          return "&lt;";
+        case ">":
+          return "&gt;";
+        case '"':
+          return "&quot;";
+        case "'":
+          return "&#39;";
+        default:
+          return char;
+      }
+    });
+
+  const normalizeIndexedText = (text: string) =>
+    text
+      .replace(/\s+/g, " ")
+      .replace(/\s+([,;:.!?])/g, "$1")
+      .replace(/\s*—\s*/g, " — ")
+      .replace(/\s*--\s*/g, " — ")
+      .trim();
+
+  const splitIndexedPoints = (text: string) => {
+    const matches = [...text.matchAll(/(?:^|\s)(\d+)\.\s*/g)];
+
+    if (matches.length === 0) {
+      return [
+        { number: null as string | null, text: normalizeIndexedText(text) },
+      ];
+    }
+
+    return matches
+      .map((match, index) => {
+        const start = (match.index ?? 0) + match[0].length;
+        const end = matches[index + 1]?.index ?? text.length;
+        return {
+          number: match[1],
+          text: normalizeIndexedText(text.slice(start, end)),
+        };
+      })
+      .filter((point) => point.text.length > 0);
+  };
+
+  const splitIndexedClauses = (text: string) =>
+    normalizeIndexedText(text)
+      .split(/\s*;\s*--\s*|\s+--\s+|;\s+/)
+      .map((item) => normalizeIndexedText(item))
+      .filter(Boolean);
+
+  const extractIndexedSubpoints = (text: string) => {
+    const matches = [...text.matchAll(/\(([a-z])\)\s*/gi)];
+
+    if (!matches.length) {
+      return null;
+    }
+
+    const intro = normalizeIndexedText(
+      text.slice(0, matches[0].index ?? 0).replace(/[:;,-]+$/, ""),
+    );
+
+    const items = matches
+      .map((match, index) => {
+        const start = (match.index ?? 0) + match[0].length;
+        const end = matches[index + 1]?.index ?? text.length;
+        return {
+          label: match[1],
+          text: normalizeIndexedText(
+            text.slice(start, end).replace(/^[;:,-\s]+/, ""),
+          ),
+        };
+      })
+      .filter((item) => item.text.length > 0);
+
+    return { intro, items };
+  };
+
+  const formatIndexedClause = (text: string) => {
+    const cleaned = normalizeIndexedText(text);
+    const subpoints = extractIndexedSubpoints(cleaned);
+
+    if (subpoints) {
+      return {
+        html: `
+          ${subpoints.intro ? `<div class="indexed-meta">${escapeHtml(subpoints.intro)}</div>` : ""}
+          <ul class="indexed-subpoints">
+            ${subpoints.items
+              .map(
+                (item) => `
+                  <li>
+                    <span class="indexed-label">${escapeHtml(item.label)}</span>
+                    <span class="indexed-divider">—</span>
+                    <span>${escapeHtml(item.text)}</span>
+                  </li>
+                `,
+              )
+              .join("")}
+          </ul>
+        `,
+      };
+    }
+
+    const labelMatch = cleaned.match(/^(.{1,40}?),\s*(.+)$/);
+    if (labelMatch && /^[A-Z]/.test(labelMatch[1])) {
+      return {
+        html: `
+          <div>
+            <span class="indexed-label">${escapeHtml(labelMatch[1])}</span>
+            <span class="indexed-divider">—</span>
+            <span>${escapeHtml(labelMatch[2])}</span>
+          </div>
+        `,
+      };
+    }
+
+    return { html: `<div>${escapeHtml(cleaned)}</div>` };
+  };
+
+  const renderIndexedDbMeaning = (text: string) => {
+    const points = splitIndexedPoints(text);
+
+    return `
+      <div class="indexed-block">
+        ${points
+          .map((point) => {
+            const clauses = splitIndexedClauses(point.text);
+            const lead = clauses.shift() ?? point.text;
+
+            const clauseHtml = clauses
+              .map((clause) => {
+                const formatted = formatIndexedClause(clause);
+                return `<li>${formatted.html}</li>`;
               })
               .join("");
 
             return `
+              <div class="indexed-point">
+                <div class="indexed-content">
+                  <div class="indexed-lead">${escapeHtml(lead)}</div>
+                  ${clauseHtml ? `<ul class="indexed-clauses">${clauseHtml}</ul>` : ""}
+                </div>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  };
+
+  const renderDefinition = (
+    word: string,
+    data: Definition[],
+    source?: LookupSource,
+  ) => {
+    const isIndexedDb = source === "indexeddb";
+
+    const parts = data
+      .map((entry, entryIndex) => {
+        const meaningBlocks = entry.meanings
+          .map((meaning) => {
+            const defs = isIndexedDb
+              ? renderIndexedDbMeaning(meaning.definitions[0]?.definition ?? "")
+              : meaning.definitions
+                  .slice(0, 3)
+                  .map((def) => {
+                    const example = def.example
+                      ? `<div class="definition-note">${escapeHtml(def.example)}</div>`
+                      : "";
+                    return `<li><div class="definition-text">${escapeHtml(def.definition)}${example}</div></li>`;
+                  })
+                  .join("");
+
+            return `
               <div class="definition-group">
                 <div class="section-header"><span>${meaning.partOfSpeech}</span></div>
-                <ul>${defs}</ul>
+                ${isIndexedDb ? defs : `<ol class="definition-list">${defs}</ol>`}
               </div>
             `;
           })
@@ -542,6 +922,7 @@ interface Definition {
           <button class="source-btn" type="button" data-source="wikipedia">Wikipedia</button>
         </div>
       `,
+      source,
     );
 
     popup.querySelectorAll("[data-source]").forEach((el) => {
@@ -567,7 +948,7 @@ interface Definition {
     openPopupAnimated();
 
     try {
-      const response = await new Promise<any>((resolve) => {
+      const response = await new Promise<LookupResponse>((resolve) => {
         chrome.runtime.sendMessage({ action: "LOOKUP_WORD", word }, (res) => {
           if (chrome.runtime.lastError) {
             resolve({
@@ -580,12 +961,14 @@ interface Definition {
         });
       });
 
+      const source = response?.source;
+
       if (
         response?.success &&
         Array.isArray(response.data) &&
         response.data.length > 0
       ) {
-        renderDefinition(word, response.data as Definition[]);
+        renderDefinition(word, response.data as Definition[], source);
       } else {
         renderNoResult(word);
       }
