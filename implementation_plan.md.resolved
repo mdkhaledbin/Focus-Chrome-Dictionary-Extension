@@ -1,0 +1,100 @@
+# Load Dictionary into IndexedDB with API Fallback
+
+## Overview
+
+Load the `dictionary_compact.json` (~22MB, flat `{word: definition}` format) into **IndexedDB** on first install/launch. Use an **in-memory cache** for recently looked-up words to avoid repeated DB reads. If a word is not found locally, fall back to the **Free Dictionary API** (`https://api.dictionaryapi.dev/api/v2/entries/en/{word}`). Remove all locale detection logic — this is **English-only**.
+
+## User Review Required
+
+> [!IMPORTANT]
+> The `dictionary_compact.json` file is **22MB**. It will be bundled as a static asset in the extension and loaded into IndexedDB on first install. This is a one-time cost, but the extension's download size will increase by ~22MB.
+
+> [!IMPORTANT]
+> The second URL you mentioned (`https://translation-1e79fb3f3adb.herokuapp.com/`) — should this be used as a translation API, or only as a secondary fallback for definitions? For now, I'm only using the Free Dictionary API as fallback. Let me know if you want to integrate the Heroku endpoint too, and how.
+
+## Proposed Changes
+
+### Background Service Worker
+
+#### [MODIFY] [background.ts](file:///Users/md.khaledbin/Practices/Chrome%20Extensions/Focus/src/background.ts)
+
+Complete rewrite of the background script:
+
+1. **Remove** all locale detection logic (`chrome.i18n.getAcceptLanguages`, `fetchSmallDictionary`, etc.)
+2. **Add IndexedDB helper** — open/create a database `FocusDictDB` with an object store `words` (key: word, value: definition)
+3. **On Install** (`chrome.runtime.onInstalled`):
+   - Check if IndexedDB already has data (flag in `chrome.storage.local`)
+   - If not, fetch `dictionary_compact.json` from `chrome.runtime.getURL()`, parse it, and **batch-insert** all entries into IndexedDB
+   - Set a flag `dictionaryLoaded: true` in `chrome.storage.local`
+4. **In-memory cache**: A `Map<string, string>` for recently looked-up words (LRU-style, max ~500 entries)
+5. **Word lookup** (`handleWordLookup`):
+   - Check in-memory cache first → return if found
+   - Check IndexedDB → return if found, add to cache
+   - Fall back to Free Dictionary API (`https://api.dictionaryapi.dev/api/v2/entries/en/{word}`)
+   - If API returns a result, **also store it in IndexedDB** for future offline use
+
+---
+
+### Build Configuration
+
+#### [MODIFY] [vite.config.ts](file:///Users/md.khaledbin/Practices/Chrome%20Extensions/Focus/vite.config.ts)
+
+- Add `copyPublicDir: true` (default, just confirm)  
+- No changes actually needed — `dictionary_compact.json` will be moved to `public/` so Vite copies it to `dist/`
+
+---
+
+### Dictionary File Location
+
+#### [MOVE] dictionary_compact.json → public/dictionary_compact.json
+
+Move the file into `public/` so it's available at `chrome.runtime.getURL('dictionary_compact.json')` after build.
+
+---
+
+### Popup UI
+
+#### [MODIFY] [App.tsx](file:///Users/md.khaledbin/Practices/Chrome%20Extensions/Focus/src/App.tsx)
+
+- Remove the locale-based "Dictionaries" list showing multiple locales
+- Show a single status: "English Dictionary" with loading progress indicator during first-time import
+- Show word count once loaded (from `chrome.storage.local`)
+
+---
+
+### Manifest (no changes needed)
+
+The manifest already has `unlimitedStorage` permission which is needed for IndexedDB with large data.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A[User selects text] --> B[Content Script sends LOOKUP_WORD]
+    B --> C[Background: Check In-Memory Cache]
+    C -->|Hit| D[Return Definition]
+    C -->|Miss| E[Check IndexedDB]
+    E -->|Hit| F[Add to Cache & Return]
+    E -->|Miss| G[Fetch from Free Dictionary API]
+    G -->|Found| H[Store in IndexedDB + Cache & Return]
+    G -->|Not Found| I[Return null - No definition]
+    
+    J[Extension Install] --> K[Load dictionary_compact.json]
+    K --> L[Batch insert into IndexedDB]
+    L --> M[Set dictionaryLoaded flag]
+```
+
+## Open Questions
+
+1. **Heroku Translation API**: Should `https://translation-1e79fb3f3adb.herokuapp.com/` be used? If so, when and how? (As a second fallback? For translations vs definitions?)
+2. **Progress indicator**: During first-time import of the 22MB dictionary, should we show a progress bar in the popup, or is a simple "Loading..." sufficient?
+
+## Verification Plan
+
+### Manual Verification
+- Build with `npm run build`
+- Load the `dist/` folder as an unpacked extension in Chrome
+- Verify IndexedDB gets populated on first install (check via DevTools → Application → IndexedDB)
+- Look up a word present in the local dictionary → confirm it returns instantly from IndexedDB
+- Look up a rare/missing word → confirm it falls back to the API
+- Reload the extension → confirm it doesn't re-import (uses the `dictionaryLoaded` flag)
