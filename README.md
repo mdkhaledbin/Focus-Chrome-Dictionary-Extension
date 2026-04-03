@@ -17,9 +17,9 @@
 
 ## ✨ What is Focus?
 
-**Focus** is a Chrome Extension built on Manifest V3 that empowers readers to look up word definitions *instantly* — directly within the page. No context switching, no new tabs. Just highlight a word, get the definition, and keep reading.
+**Focus** is a Chrome Extension built on Manifest V3 that empowers readers to look up word definitions _instantly_ — directly within the page. No context switching, no new tabs. Just highlight a word, get the definition, and keep reading.
 
-> **Philosophy:** *Minimum Distraction. Maximum Context.*
+> **Philosophy:** _Minimum Distraction. Maximum Context._
 
 ---
 
@@ -37,6 +37,8 @@
 
 ## 📸 How to Use — Step by Step
 
+> ✅ This repository includes a ready-to-use `dist/` folder for quick install without any build steps.
+
 > The following screenshots walk you through the full experience.
 
 <table>
@@ -47,9 +49,9 @@
       <p>Navigate to <code>chrome://extensions</code>, enable Developer Mode, and click <strong>Load unpacked</strong> → select the <code>dist/</code> folder.</p>
     </td>
     <td align="center" width="50%">
-      <strong>Step 2 — Build the Extension</strong><br/>
+      <strong>Step 2 — (Contributors) Build the Extension</strong><br/>
       <img src="images/step-1-build-dist.png" alt="Build the dist folder" width="100%" />
-      <p>Upload the dist folder you get through run <code>npm run build</code> to the chrome web store.</p>
+      <p>Only needed if you changed source code. Run <code>npm run build</code> to regenerate <code>dist/</code>.</p>
     </td>
   </tr>
   <tr>
@@ -76,6 +78,21 @@
 ---
 
 ## 🛠️ Installation & Development
+
+### Option A — Easy Setup (No Build Required)
+
+- Direct `dist/` folder download: [Download `dist` folder](https://download-directory.github.io/?url=https://github.com/mdkhaledbin/Focus-Chrome-Dictionary-Extension/tree/main/dist)
+- If that link is blocked in your network, download the repo ZIP and use its `dist/` folder.
+
+1. Download or clone this repository
+2. Open Chrome and go to **`chrome://extensions`**
+3. Enable **Developer Mode** (top-right toggle)
+4. Click **"Load unpacked"**
+5. Select the **`dist/`** folder from this repository
+
+> ✅ You can use the extension immediately. No Node.js, npm, or build step required.
+
+### Option B — Contributor Setup (Build from Source)
 
 ### Prerequisites
 
@@ -120,14 +137,14 @@ npm run dev
 
 ## 🏗️ Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Build Tool | [Vite 8.x](https://vitejs.dev/) |
-| Language | TypeScript 5.9 |
-| UI Framework | React 19 |
-| Styling | Tailwind CSS 4.x |
-| Extension API | Chrome Manifest V3 |
-| Local Data | IndexedDB + In-Memory Cache |
+| Layer             | Technology                                                                         |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| Build Tool        | [Vite 8.x](https://vitejs.dev/)                                                    |
+| Language          | TypeScript 5.9                                                                     |
+| UI Framework      | React 19                                                                           |
+| Styling           | Tailwind CSS 4.x                                                                   |
+| Extension API     | Chrome Manifest V3                                                                 |
+| Local Data        | IndexedDB + In-Memory Cache                                                        |
 | Dictionary Source | Webster's English (Compact JSON) + [dictionaryapi.dev](https://dictionaryapi.dev/) |
 
 ---
